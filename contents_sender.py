@@ -1,86 +1,63 @@
 import streamlit as st
 import requests
 
-# 페이지 기본 설정
-st.set_page_config(page_title="텔레그램 메신저", page_icon="💬")
+# 1. 페이지 설정 (브라우저 탭 이름만 설정)
+st.set_page_config(page_title="Messenger", layout="centered")
 
-st.title("텔레그램 메시지 발송기 🚀")
-st.write("텍스트, 이미지, PDF 파일을 텔레그램으로 즉시 발송합니다.")
-
-# 1. API 키 불러오기
-try:
-    TELEGRAM_TOKEN = st.secrets["TELEGRAM_TOKEN"]
-    CHAT_ID = st.secrets["CHAT_ID"]
-except KeyError:
-    st.error("⚠️ Streamlit Secrets에 TELEGRAM_TOKEN과 CHAT_ID가 설정되지 않았습니다.")
-    st.stop()
-
-# 2. 세션 상태(session_state) 초기화
+# 2. 세션 상태 초기화 (메모리 효율화)
 if 'msg_input' not in st.session_state:
     st.session_state.msg_input = ""
-if 'use_spoiler' not in st.session_state:
-    st.session_state.use_spoiler = False
 
-# 3. 메시지 및 파일 전송 함수
-def send_telegram_all():
-    message = st.session_state.msg_input 
-    use_spoiler = st.session_state.use_spoiler
-    # 파일 업로더에서 파일 가져오기 (세션 상태가 아닌 직접 접근)
-    uploaded_file = st.session_state.file_up 
+# 3. 발송 로직 (스트리밍 방식 적용)
+def send_telegram():
+    msg = st.session_state.msg_input.strip()
+    file = st.session_state.file_up
     
-    # 텍스트와 파일이 모두 없는 경우 방지
-    if not message.strip() and uploaded_file is None:
-        st.warning("⚠️ 전송할 메시지나 파일을 입력해주세요.")
+    if not msg and not file:
+        st.warning("내용을 입력하세요.")
         return
 
-    # 텍스트 가공 (스포일러 여부)
-    formatted_text = message
-    parse_mode = None
-    if use_spoiler and message.strip():
-        safe_msg = message.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-        formatted_text = f"<tg-spoiler>{safe_msg}</tg-spoiler>"
-        parse_mode = "HTML"
+    token = st.secrets["TELEGRAM_TOKEN"]
+    chat_id = st.secrets["CHAT_ID"]
+    
+    payload = {"chat_id": chat_id}
+    
+    # 스포일러 처리 로직
+    if st.session_state.get('use_spoiler') and msg:
+        msg = f"<tg-spoiler>{msg.replace('&','&amp;').replace('<','&lt;').replace('>','&gt;')}</tg-spoiler>"
+        payload["parse_mode"] = "HTML"
 
     try:
-        if uploaded_file is not None:
-            # [A] 파일이 있는 경우 (이미지, PDF 공통: sendDocument 사용)
-            url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendDocument"
-            data = {"chat_id": CHAT_ID, "caption": formatted_text}
-            if parse_mode:
-                data["parse_mode"] = parse_mode
-            
-            # 파일 데이터 준비
-            files = {"document": (uploaded_file.name, uploaded_file.getvalue())}
-            response = requests.post(url, data=data, files=files)
+        if file:
+            # 파일 스트리밍 전송 (메모리 절약)
+            url = f"https://api.telegram.org/bot{token}/sendDocument"
+            payload["caption"] = msg
+            files = {"document": (file.name, file)}
+            resp = requests.post(url, data=payload, files=files)
         else:
-            # [B] 텍스트만 있는 경우
-            url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-            payload = {"chat_id": CHAT_ID, "text": formatted_text}
-            if parse_mode:
-                payload["parse_mode"] = parse_mode
-            response = requests.post(url, json=payload)
+            # 텍스트 전송
+            url = f"https://api.telegram.org/bot{token}/sendMessage"
+            payload["text"] = msg
+            resp = requests.post(url, json=payload)
 
-        if response.status_code == 200:
-            st.success("✅ 성공적으로 발송되었습니다!")
-            # 발송 성공 시 입력창 초기화
-            st.session_state.msg_input = "" 
+        if resp.status_code == 200:
+            st.success("발송 완료")
+            st.session_state.msg_input = "" # 입력창 초기화
         else:
-            st.error(f"❌ 발송 실패: {response.text}")
-            
+            st.error(f"오류: {resp.status_code}")
     except Exception as e:
-        st.error(f"❌ 오류가 발생했습니다: {e}")
+        st.error(f"통신 에러: {e}")
 
-# 4. UI 구성
-# 텍스트 입력창
-st.text_area("전송할 메시지를 입력하세요:", height=150, key="msg_input")
+# 4. 심플 UI 구성
+# 제목과 설명 이미지 제거, 간결한 입력창 위주 배치
+st.text_area("Message", height=200, key="msg_input", placeholder="전송할 내용을 입력하세요...")
 
-# 스포일러 옵션
-st.checkbox("👀 텍스트 스포일러(블러) 처리하기", key="use_spoiler")
+# 체크박스와 파일 업로더를 가로로 배치하여 공간 절약
+col1, col2 = st.columns([1, 2])
+with col1:
+    st.checkbox("Spoiler", key="use_spoiler")
+with col2:
+    st.file_uploader("Upload", type=["jpg", "png", "pdf"], key="file_up", label_visibility="collapsed")
 
-# 파일 업로더 추가 (이미지 및 PDF 제한)
-st.file_uploader("이미지 또는 PDF 파일을 선택하세요:", 
-                 type=["jpg", "jpeg", "png", "pdf"], 
-                 key="file_up")
-
-# 5. 전송 버튼
-st.button("텔레그램으로 전송", type="primary", on_click=send_telegram_all)
+# 전송 버튼 (강조색 적용)
+st.button("SEND", type="primary", on_click=send_telegram, use_container_width=True)
