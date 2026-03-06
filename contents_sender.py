@@ -16,29 +16,40 @@ except KeyError:
     st.stop()
 
 # 2. 세션 상태(session_state) 초기화
-# 텍스트창의 내용을 저장하고 조작하기 위해 'msg_input'이라는 빈 공간을 만듭니다.
 if 'msg_input' not in st.session_state:
     st.session_state.msg_input = ""
+# ★ 스포일러 체크박스 상태를 저장할 공간도 초기화합니다.
+if 'use_spoiler' not in st.session_state:
+    st.session_state.use_spoiler = False
 
 # 3. 메시지 전송 함수 만들기 (버튼 클릭 시 실행될 동작)
 def send_telegram_msg():
-    # 세션 상태에 저장된 현재 텍스트창 내용을 가져옵니다.
     message = st.session_state.msg_input 
+    use_spoiler = st.session_state.use_spoiler # 현재 체크박스 상태 가져오기
     
     if message.strip():
         url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+        
+        # 기본 페이로드 구성
         payload = {
             "chat_id": CHAT_ID,
             "text": message
         }
+        
+        # ★ 스포일러가 체크되어 있다면 텍스트 변환 및 파라미터 추가
+        if use_spoiler:
+            # HTML 태그 인식 오류 방지
+            safe_msg = message.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            # 스포일러 태그 씌우기
+            payload["text"] = f"<tg-spoiler>{safe_msg}</tg-spoiler>"
+            payload["parse_mode"] = "HTML"
+
         try:
             response = requests.post(url, json=payload)
             if response.status_code == 200:
                 st.success("✅ 메시지가 성공적으로 발송되었습니다!")
-                
-                # ★ 핵심: 발송 성공 시 세션 상태를 빈 문자열로 만들어 텍스트창을 초기화합니다 ★
+                # 발송 성공 시 텍스트창 초기화
                 st.session_state.msg_input = "" 
-                
             else:
                 st.error(f"❌ 발송 실패 (에러 코드: {response.status_code})\n{response.text}")
         except Exception as e:
@@ -47,9 +58,10 @@ def send_telegram_msg():
         st.warning("⚠️ 전송할 메시지 내용을 먼저 입력해주세요.")
 
 # 4. 입력 폼 구성
-# key="msg_input"을 추가하여 텍스트창을 위의 세션 상태와 연결합니다.
 st.text_area("전송할 메시지를 입력하세요:", height=150, key="msg_input")
 
+# ★ 스포일러 옵션 체크박스 추가 (key를 부여해 세션 상태와 연결)
+st.checkbox("👀 텍스트 스포일러(블러) 처리하기", key="use_spoiler")
+
 # 5. 전송 버튼
-# on_click 속성을 사용하여 버튼이 눌렸을 때 send_telegram_msg 함수를 실행하도록 합니다.
 st.button("텔레그램으로 전송", type="primary", on_click=send_telegram_msg)
