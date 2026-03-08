@@ -1,6 +1,6 @@
 import streamlit as st
 import requests
-import json # ★ 표준 JSON 변환을 위해 추가
+import json
 
 # 1. 페이지 설정
 st.set_page_config(page_title="KIS FICC Messenger", layout="centered")
@@ -48,18 +48,19 @@ def send_telegram():
                 file_id = f"file_{i}"
                 media_item = {
                     "type": "photo" if file.type.startswith("image") else "document",
-                    "media": f"attach://{file_id}"
+                    "media": f"attach://{file_id}",
+                    # ★ 핵심 수정: 모든 파일에 이 옵션이 포함되어야 하며 값이 같아야 합니다.
+                    "show_caption_above_media": True 
                 }
+                
+                # 첫 번째 파일에만 텍스트 정보 포함
                 if i == 0:
                     media_item["caption"] = full_text
                     media_item["parse_mode"] = "HTML"
-                    media_item["show_caption_above_media"] = True # 메시지 상단 배치
                 
                 media.append(media_item)
-                # ★ 메모리 효율을 위해 파일 객체 자체를 전달
                 files[file_id] = (file.name, file)
 
-            # ★ 핵심: json.dumps를 사용하여 표준 JSON 규격(쌍따옴표)으로 변환
             resp = requests.post(url, data={"chat_id": chat_id, "media": json.dumps(media)}, files=files)
         
         # [B] 파일이 하나인 경우
