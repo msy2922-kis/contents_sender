@@ -46,7 +46,7 @@ def send_telegram() -> None:
     token   = st.secrets["TELEGRAM_TOKEN"]
     chat_id = st.secrets["CHAT_ID"]
 
-    full_text  = _build_message(subj, msg, st.session_state.get("use_spoiler", False))
+    full_text = _build_message(subj, msg, st.session_state.get("use_spoiler", False))
 
     # 파일 분류 (한 번만 수행)
     images = [f for f in uploaded_files if f.type.startswith("image/")]
@@ -54,23 +54,36 @@ def send_telegram() -> None:
 
     try:
         # ── [A] 텍스트 / 이미지 발송 ──────────────────────────────────────────
+        # PDF만 있을 경우: 텍스트는 첫 번째 PDF의 캡션으로 포함되므로 별도 발송 생략
         if images:
             resp = _send_images(token, chat_id, images, full_text)
-        else:
+            if resp.status_code != 200:
+                st.error(f"❌ 실패: {resp.text}")
+                return
+        elif not docs:
+            # 텍스트만 있을 경우
             resp = _post(
                 token, "sendMessage",
                 json={"chat_id": chat_id, "text": full_text, "parse_mode": "HTML"},
             )
-
-        if resp.status_code != 200:
-            st.error(f"❌ 실패: {resp.text}")
-            return
+            if resp.status_code != 200:
+                st.error(f"❌ 실패: {resp.text}")
+                return
 
         # ── [B] PDF / 문서 순차 발송 ──────────────────────────────────────────
-        for doc in docs:
+        for i, doc in enumerate(docs):
+            # 이미지가 없을 경우: 첫 번째 PDF에 캡션(제목+내용) 포함
+            caption_for_doc = full_text if (i == 0 and not images) else ""
+            payload = {
+                "chat_id": chat_id,
+                "show_caption_above_media": True,
+            }
+            if caption_for_doc:
+                payload["caption"]    = caption_for_doc
+                payload["parse_mode"] = "HTML"
             doc_resp = _post(
                 token, "sendDocument",
-                data={"chat_id": chat_id, "show_caption_above_media": True},
+                data=payload,
                 files={"document": (doc.name, doc)},
             )
             if doc_resp.status_code != 200:
