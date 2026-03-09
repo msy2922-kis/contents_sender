@@ -32,15 +32,24 @@ st.session_state.setdefault("msg_input", "")
 
 # ── 5. 헬퍼 함수 ─────────────────────────────────────────────────────────────
 
+EXPANDABLE_THRESHOLD = 200  # 이 글자 수 초과 시 자동으로 접힌 블록 처리
+
 def _build_message(subj: str, msg: str, use_spoiler: bool) -> str:
-    """발송용 전문 텍스트 조립."""
-    # [개선] 직접 구현한 _escape() → 표준 라이브러리 html.escape()로 대체
+    """발송용 전문 텍스트 조립.
+    - msg가 EXPANDABLE_THRESHOLD 초과 시 → <blockquote expandable> 로 감싸서
+      Telegram에서 '더 보기' 형태로 표시
+    - use_spoiler 체크 시 → 본문 전체를 추가로 <tg-spoiler> 처리
+    """
     parts = ['<b><a href="https://t.me/">KIS FICC Sales InFo.</a></b>', ""]
     if subj:
         parts += [f"<b>{html.escape(subj)}</b>", ""]
     if msg:
         body = html.escape(msg)
-        parts.append(f"<tg-spoiler>{body}</tg-spoiler>" if use_spoiler else body)
+        if use_spoiler:
+            body = f"<tg-spoiler>{body}</tg-spoiler>"
+        if len(msg) > EXPANDABLE_THRESHOLD:
+            body = f"<blockquote expandable>{body}</blockquote>"
+        parts.append(body)
     return "\n".join(parts)
 
 
