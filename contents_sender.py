@@ -24,57 +24,76 @@ def send_telegram():
     token = st.secrets["TELEGRAM_TOKEN"]
     chat_id = st.secrets["CHAT_ID"]
     
-    # [가독성 강화 양식]
-    # 1. 헤더: 파란색 효과 (Link Trick)
+    # [가독성 양식]
+    # 1. 헤더: 파란색 효과
     full_text = '<b><a href="https://t.me/">KIS FICC Sales InFo.</a></b>\n\n'
     
-    # 2. 제목: 기호 없이 굵은 글씨로만 강조 (수정된 부분)
+    # 2. 제목: 굵은 글씨
     if subj:
         full_text += f"<b>{subj}</b>\n\n"
     
-    # 3. 내용 배치
+    # 3. 내용
     if msg:
+        safe_msg = msg.replace('&','&amp;').replace('<','&lt;').replace('>','&gt;')
         if st.session_state.get('use_spoiler'):
-            safe_msg = msg.replace('&','&amp;').replace('<','&lt;').replace('>','&gt;')
             full_text += f"<tg-spoiler>{safe_msg}</tg-spoiler>"
         else:
-            full_text += msg.replace('&','&amp;').replace('<','&lt;').replace('>','&gt;')
+            full_text += safe_msg
 
     try:
-        base_payload = {"chat_id": chat_id, "parse_mode": "HTML"}
-
+        # [A] 파일이 여러 개인 경우 (이미지/PDF 혼합 혹은 PDF 다수)
         if uploaded_files and len(uploaded_files) > 1:
             url = f"https://api.telegram.org/bot{token}/sendMediaGroup"
             media = []
             files = {}
+            
             for i, file in enumerate(uploaded_files):
                 file_id = f"file_{i}"
+                # 파일 타입에 관계없이 document로 통일하거나 자동 판별
+                is_image = file.type.startswith("image")
+                
                 media_item = {
-                    "type": "photo" if file.type.startswith("image") else "document",
+                    "type": "photo" if is_image else "document",
                     "media": f"attach://{file_id}",
-                    "show_caption_above_media": True 
+                    "show_caption_above_media": True  # ★ 모든 파일에 하단 배치 옵션 적용
                 }
+                
                 if i == 0:
                     media_item["caption"] = full_text
                     media_item["parse_mode"] = "HTML"
+                
                 media.append(media_item)
                 files[file_id] = (file.name, file)
+
             resp = requests.post(url, data={"chat_id": chat_id, "media": json.dumps(media)}, files=files)
         
+        # [B] 파일이 딱 하나인 경우
         elif uploaded_files:
             file = uploaded_files[0]
-            url = f"https://api.telegram.org/bot{token}/sendDocument"
-            payload = {**base_payload, "caption": full_text, "show_caption_above_media": True}
-            files = {"document": (file.name, file)}
+            is_image = file.type.startswith("image")
+            
+            # 이미지면 sendPhoto, 그 외(PDF 등)는 sendDocument
+            method = "sendPhoto" if is_image else "sendDocument"
+            url = f"https://api.telegram.org/bot{token}/{method}"
+            
+            payload = {
+                "chat_id": chat_id, 
+                "caption": full_text, 
+                "parse_mode": "HTML",
+                "show_caption_above_media": True  # ★ 단일 PDF 전송 시에도 하단 배치 적용
+            }
+            file_key = "photo" if is_image else "document"
+            files = {file_key: (file.name, file)}
             resp = requests.post(url, data=payload, files=files)
             
+        # [C] 텍스트만 있는 경우
         else:
             url = f"https://api.telegram.org/bot{token}/sendMessage"
-            payload = {**base_payload, "text": full_text}
+            payload = {"chat_id": chat_id, "text": full_text, "parse_mode": "HTML"}
             resp = requests.post(url, json=payload)
 
         if resp.status_code == 200:
-            st.success("✅ 발송 완료")
+            st.success("✅ 발송 완료 (파일 하단 배치)")
             st.session_state.subject_input = ""
             st.session_state.msg_input = ""
         else:
