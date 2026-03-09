@@ -25,14 +25,14 @@ def send_telegram():
     chat_id = st.secrets["CHAT_ID"]
     
     # [가독성 강화 양식]
-    # 1. 헤더: 링크 트릭을 사용하여 파란색으로 표시 (클릭해도 이동하지 않는 형식)
+    # 1. 헤더: 파란색 효과 (Link Trick)
     full_text = '<b><a href="https://t.me/">KIS FICC Sales InFo.</a></b>\n\n'
     
-    # 2. 제목: 대괄호와 굵은 글씨로 강조
+    # 2. 제목: 기호 없이 굵은 글씨로만 강조 (수정된 부분)
     if subj:
-        full_text += f"<b>[{subj}]</b>\n\n"
+        full_text += f"<b>{subj}</b>\n\n"
     
-    # 3. 내용: 구분선 대신 여백 활용 및 본문 배치
+    # 3. 내용 배치
     if msg:
         if st.session_state.get('use_spoiler'):
             safe_msg = msg.replace('&','&amp;').replace('<','&lt;').replace('>','&gt;')
@@ -41,13 +41,8 @@ def send_telegram():
             full_text += msg.replace('&','&amp;').replace('<','&lt;').replace('>','&gt;')
 
     try:
-        # 공통 설정
-        base_payload = {
-            "chat_id": chat_id,
-            "parse_mode": "HTML"
-        }
+        base_payload = {"chat_id": chat_id, "parse_mode": "HTML"}
 
-        # [A] 파일이 여러 개인 경우 (앨범 발송)
         if uploaded_files and len(uploaded_files) > 1:
             url = f"https://api.telegram.org/bot{token}/sendMediaGroup"
             media = []
@@ -66,7 +61,6 @@ def send_telegram():
                 files[file_id] = (file.name, file)
             resp = requests.post(url, data={"chat_id": chat_id, "media": json.dumps(media)}, files=files)
         
-        # [B] 파일이 하나인 경우
         elif uploaded_files:
             file = uploaded_files[0]
             url = f"https://api.telegram.org/bot{token}/sendDocument"
@@ -74,7 +68,6 @@ def send_telegram():
             files = {"document": (file.name, file)}
             resp = requests.post(url, data=payload, files=files)
             
-        # [C] 텍스트만 있는 경우
         else:
             url = f"https://api.telegram.org/bot{token}/sendMessage"
             payload = {**base_payload, "text": full_text}
@@ -92,7 +85,6 @@ def send_telegram():
 
 # 4. UI 구성
 st.markdown("<h3 style='color: #0088cc;'>KIS FICC Sales InFo.</h3>", unsafe_allow_html=True)
-
 st.text_input("제목 (Subject)", key="subject_input", placeholder="제목을 입력하세요")
 st.text_area("내용 (Message)", height=200, key="msg_input", placeholder="내용을 입력하세요")
 
