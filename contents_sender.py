@@ -1,7 +1,6 @@
 import streamlit as st
 import requests
 import json
-from itertools import filterfalse
 
 # ── 1. 페이지 설정 ─────────────────────────────────────────────────────────────
 st.set_page_config(page_title="KIS FICC Messenger", layout="centered")
@@ -38,27 +37,28 @@ def _check(resp: requests.Response, label: str = "") -> bool:
         return False
     return True
 
-# ── 4. 이미지 발송 (항상 MediaGroup으로 통일, 1장도 동일 처리) ───────────────────
+# ── 4. 이미지 발송 ─────────────────────────────────────────────────────────────
 def _send_images(token: str, chat_id: str, images: list, caption: str) -> bool:
-    media, files = [], {}
-    for i, f in enumerate(images):
-        fid = f"file_{i}"
-        item: dict = {"type": "photo", "media": f"attach://{fid}", "show_caption_above_media": True}
-        if i == 0:
-            item |= {"caption": caption, "parse_mode": "HTML"}
-        media.append(item)
-        files[fid] = (f.name, f)
-
-    # 1장이면 sendPhoto, 복수면 sendMediaGroup
     if len(images) == 1:
-        _, f = next(iter(files.items()))
         resp = _post(
             token, "sendPhoto",
-            data={"chat_id": chat_id, "caption": caption, "parse_mode": "HTML",
-                  "show_caption_above_media": True},
-            files={"photo": f},
+            data={
+                "chat_id": chat_id,
+                "caption": caption,
+                "parse_mode": "HTML",
+                "show_caption_above_media": True,
+            },
+            files={"photo": (images[0].name, images[0])},
         )
     else:
+        media, files = [], {}
+        for i, f in enumerate(images):
+            fid = f"file_{i}"
+            item: dict = {"type": "photo", "media": f"attach://{fid}", "show_caption_above_media": True}
+            if i == 0:
+                item |= {"caption": caption, "parse_mode": "HTML"}
+            media.append(item)
+            files[fid] = (f.name, f)
         resp = _post(
             token, "sendMediaGroup",
             data={"chat_id": chat_id, "media": json.dumps(media)},
@@ -76,12 +76,12 @@ def send_telegram() -> None:
         st.warning("내용을 입력하세요.")
         return
 
-    token      = st.secrets["TELEGRAM_TOKEN"]
-    chat_id    = st.secrets["CHAT_ID"]
-    full_text  = _build_message(subj, msg, st.session_state.get("use_spoiler", False))
-    is_image   = lambda f: f.type.startswith("image/")
-    images     = [f for f in files if is_image(f)]
-    docs       = [f for f in files if not is_image(f)]
+    token     = st.secrets["TELEGRAM_TOKEN"]
+    chat_id   = st.secrets["CHAT_ID"]
+    full_text = _build_message(subj, msg, st.session_state.get("use_spoiler", False))
+    is_image  = lambda f: f.type.startswith("image/")
+    images    = [f for f in files if is_image(f)]
+    docs      = [f for f in files if not is_image(f)]
 
     try:
         # [A] 텍스트 or 이미지 발송
@@ -95,14 +95,15 @@ def send_telegram() -> None:
                 return
 
         # [B] 문서 순차 발송
+        # ✅ 수정: show_caption_above_media 제거 → 캡션이 메시지 아래에 위치
         for i, doc in enumerate(docs):
             caption = full_text if (i == 0 and not images) else ""
-            payload = {"chat_id": chat_id, "show_caption_above_media": True}
+            payload: dict = {"chat_id": chat_id}
             if caption:
                 payload |= {"caption": caption, "parse_mode": "HTML"}
             resp = _post(token, "sendDocument",
                          data=payload, files={"document": (doc.name, doc)})
-            _check(resp, doc.name)  # 경고만 — 다음 파일 계속 발송
+            _check(resp, doc.name)
 
         st.success("✅ KIS FICC 양식 발송 완료")
         st.session_state.update(subject_input="", msg_input="")
