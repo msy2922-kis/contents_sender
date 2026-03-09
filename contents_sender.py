@@ -1,21 +1,19 @@
 import streamlit as st
 import requests
 import json
+from itertools import filterfalse
 
-# ── 1. 페이지 설정 ────────────────────────────────────────────────────────────
+# ── 1. 페이지 설정 ─────────────────────────────────────────────────────────────
 st.set_page_config(page_title="KIS FICC Messenger", layout="centered")
 
-# ── 2. 세션 상태 초기화 (불필요한 반복 실행 방지) ─────────────────────────────
+# ── 2. 세션 상태 초기화 ────────────────────────────────────────────────────────
 if "initialized" not in st.session_state:
-    st.session_state.msg_input     = ""
-    st.session_state.subject_input = ""
-    st.session_state.initialized   = True
+    st.session_state.update(msg_input="", subject_input="", initialized=True)
 
-# ── 3. 헬퍼: HTML 특수문자 이스케이프 ────────────────────────────────────────
+# ── 3. 유틸리티 ───────────────────────────────────────────────────────────────
 def _escape(text: str) -> str:
     return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
-# ── 4. 헬퍼: 발송용 전문 텍스트 조립 (문자열 연결 대신 리스트 join) ─────────────
 def _build_message(subj: str, msg: str, use_spoiler: bool) -> str:
     parts = ['<b><a href="https://t.me/">KIS FICC Sales InFo.</a></b>', ""]
     if subj:
@@ -25,7 +23,6 @@ def _build_message(subj: str, msg: str, use_spoiler: bool) -> str:
         parts.append(f"<tg-spoiler>{body}</tg-spoiler>" if use_spoiler else body)
     return "\n".join(parts)
 
-# ── 5. 헬퍼: Telegram API 공통 POST ──────────────────────────────────────────
 def _post(token: str, method: str, **kwargs) -> requests.Response:
     return requests.post(
         f"https://api.telegram.org/bot{token}/{method}",
@@ -33,108 +30,90 @@ def _post(token: str, method: str, **kwargs) -> requests.Response:
         **kwargs,
     )
 
-# ── 6. 발송 로직 ──────────────────────────────────────────────────────────────
-def send_telegram() -> None:
-    subj           = st.session_state.subject_input.strip()
-    msg            = st.session_state.msg_input.strip()
-    uploaded_files = st.session_state.get("file_up") or []
+def _check(resp: requests.Response, label: str = "") -> bool:
+    """200이 아니면 에러 표시 후 False 반환."""
+    if resp.status_code != 200:
+        prefix = f"'{label}' " if label else ""
+        st.error(f"❌ {prefix}발송 실패: {resp.text}")
+        return False
+    return True
 
-    if not subj and not msg and not uploaded_files:
+# ── 4. 이미지 발송 (항상 MediaGroup으로 통일, 1장도 동일 처리) ───────────────────
+def _send_images(token: str, chat_id: str, images: list, caption: str) -> bool:
+    media, files = [], {}
+    for i, f in enumerate(images):
+        fid = f"file_{i}"
+        item: dict = {"type": "photo", "media": f"attach://{fid}", "show_caption_above_media": True}
+        if i == 0:
+            item |= {"caption": caption, "parse_mode": "HTML"}
+        media.append(item)
+        files[fid] = (f.name, f)
+
+    # 1장이면 sendPhoto, 복수면 sendMediaGroup
+    if len(images) == 1:
+        _, f = next(iter(files.items()))
+        resp = _post(
+            token, "sendPhoto",
+            data={"chat_id": chat_id, "caption": caption, "parse_mode": "HTML",
+                  "show_caption_above_media": True},
+            files={"photo": f},
+        )
+    else:
+        resp = _post(
+            token, "sendMediaGroup",
+            data={"chat_id": chat_id, "media": json.dumps(media)},
+            files=files,
+        )
+    return _check(resp)
+
+# ── 5. 발송 로직 ───────────────────────────────────────────────────────────────
+def send_telegram() -> None:
+    subj  = st.session_state.subject_input.strip()
+    msg   = st.session_state.msg_input.strip()
+    files = st.session_state.get("file_up") or []
+
+    if not any([subj, msg, files]):
         st.warning("내용을 입력하세요.")
         return
 
-    token   = st.secrets["TELEGRAM_TOKEN"]
-    chat_id = st.secrets["CHAT_ID"]
-
-    full_text = _build_message(subj, msg, st.session_state.get("use_spoiler", False))
-
-    # 파일 분류 (한 번만 수행)
-    images = [f for f in uploaded_files if f.type.startswith("image/")]
-    docs   = [f for f in uploaded_files if not f.type.startswith("image/")]
+    token      = st.secrets["TELEGRAM_TOKEN"]
+    chat_id    = st.secrets["CHAT_ID"]
+    full_text  = _build_message(subj, msg, st.session_state.get("use_spoiler", False))
+    is_image   = lambda f: f.type.startswith("image/")
+    images     = [f for f in files if is_image(f)]
+    docs       = [f for f in files if not is_image(f)]
 
     try:
-        # ── [A] 텍스트 / 이미지 발송 ──────────────────────────────────────────
-        # PDF만 있을 경우: 텍스트는 첫 번째 PDF의 캡션으로 포함되므로 별도 발송 생략
+        # [A] 텍스트 or 이미지 발송
         if images:
-            resp = _send_images(token, chat_id, images, full_text)
-            if resp.status_code != 200:
-                st.error(f"❌ 실패: {resp.text}")
+            if not _send_images(token, chat_id, images, full_text):
                 return
         elif not docs:
-            # 텍스트만 있을 경우
-            resp = _post(
-                token, "sendMessage",
-                json={"chat_id": chat_id, "text": full_text, "parse_mode": "HTML"},
-            )
-            if resp.status_code != 200:
-                st.error(f"❌ 실패: {resp.text}")
+            resp = _post(token, "sendMessage",
+                         json={"chat_id": chat_id, "text": full_text, "parse_mode": "HTML"})
+            if not _check(resp):
                 return
 
-        # ── [B] PDF / 문서 순차 발송 ──────────────────────────────────────────
+        # [B] 문서 순차 발송
         for i, doc in enumerate(docs):
-            # 이미지가 없을 경우: 첫 번째 PDF에 캡션(제목+내용) 포함
-            caption_for_doc = full_text if (i == 0 and not images) else ""
-            payload = {
-                "chat_id": chat_id,
-                "show_caption_above_media": True,
-            }
-            if caption_for_doc:
-                payload["caption"]    = caption_for_doc
-                payload["parse_mode"] = "HTML"
-            doc_resp = _post(
-                token, "sendDocument",
-                data=payload,
-                files={"document": (doc.name, doc)},
-            )
-            if doc_resp.status_code != 200:
-                st.warning(f"⚠️ '{doc.name}' 발송 실패: {doc_resp.text}")
+            caption = full_text if (i == 0 and not images) else ""
+            payload = {"chat_id": chat_id, "show_caption_above_media": True}
+            if caption:
+                payload |= {"caption": caption, "parse_mode": "HTML"}
+            resp = _post(token, "sendDocument",
+                         data=payload, files={"document": (doc.name, doc)})
+            _check(resp, doc.name)  # 경고만 — 다음 파일 계속 발송
 
         st.success("✅ KIS FICC 양식 발송 완료")
-        st.session_state.subject_input = ""
-        st.session_state.msg_input     = ""
+        st.session_state.update(subject_input="", msg_input="")
 
     except requests.exceptions.Timeout:
         st.error("❌ 요청 시간 초과 — 네트워크를 확인하세요.")
     except Exception as e:
         st.error(f"에러 발생: {e}")
 
-
-def _send_images(token: str, chat_id: str, images: list, caption: str) -> requests.Response:
-    """이미지 1장 또는 앨범(복수) 발송."""
-    if len(images) == 1:
-        return _post(
-            token, "sendPhoto",
-            data={
-                "chat_id": chat_id,
-                "caption": caption,
-                "parse_mode": "HTML",
-                "show_caption_above_media": True,
-            },
-            files={"photo": (images[0].name, images[0])},
-        )
-
-    # 복수 이미지 → sendMediaGroup
-    media = []
-    files = {}
-    for i, f in enumerate(images):
-        fid  = f"file_{i}"
-        item = {"type": "photo", "media": f"attach://{fid}", "show_caption_above_media": True}
-        if i == 0:
-            item["caption"]    = caption
-            item["parse_mode"] = "HTML"
-        media.append(item)
-        files[fid] = (f.name, f)
-
-    return _post(
-        token, "sendMediaGroup",
-        data={"chat_id": chat_id, "media": json.dumps(media)},
-        files=files,
-    )
-
-
-# ── 7. UI ─────────────────────────────────────────────────────────────────────
+# ── 6. UI ──────────────────────────────────────────────────────────────────────
 st.markdown("<h3 style='color:#0088cc;'>KIS FICC Sales InFo.</h3>", unsafe_allow_html=True)
-
 st.text_input("제목 (Subject)", key="subject_input", placeholder="제목을 입력하세요")
 st.text_area("내용 (Message)", height=200, key="msg_input", placeholder="내용을 입력하세요")
 
@@ -142,12 +121,7 @@ col1, col2 = st.columns([1, 2])
 with col1:
     st.checkbox("Spoiler", key="use_spoiler")
 with col2:
-    st.file_uploader(
-        "Upload (Images & PDFs)",
-        type=["jpg", "png", "pdf"],
-        key="file_up",
-        accept_multiple_files=True,
-        label_visibility="collapsed",
-    )
+    st.file_uploader("Upload (Images & PDFs)", type=["jpg", "png", "pdf"],
+                     key="file_up", accept_multiple_files=True, label_visibility="collapsed")
 
 st.button("SEND", type="primary", on_click=send_telegram, use_container_width=True)
