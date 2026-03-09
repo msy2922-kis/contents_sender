@@ -1,16 +1,38 @@
 import streamlit as st
 import requests
 import json
+from PIL import Image
+import io
 
-# 1. 페이지 설정
+# 1. 페이지 및 세션 설정
 st.set_page_config(page_title="KIS FICC Messenger", layout="centered")
-
-# 2. 세션 상태 초기화
 for key in ['msg_input', 'subject_input']:
     if key not in st.session_state:
         st.session_state[key] = ""
 
-# 3. 발송 로직 (순차적 발송 방식)
+# 2. 이미지를 정방형(1:1)으로 만드는 함수
+def make_square(file):
+    image = Image.open(file)
+    # 이미지 포맷 유지 (RGBA인 경우 RGB로 변환하여 배경색 처리 가능)
+    if image.mode in ("RGBA", "P"):
+        image = image.convert("RGB")
+    
+    width, height = image.size
+    new_size = max(width, height)
+    
+    # ★ 수정 포인트: 검은색 배경의 정방형 도화지 생성 (0, 0, 0)
+    new_image = Image.new("RGB", (new_size, new_size), (0, 0, 0))
+    # 이미지를 중앙에 배치
+    new_image.paste(image, ((new_size - width) // 2, (new_size - height) // 2))
+    
+    # 메모리에 저장 후 반환
+    img_byte_arr = io.BytesIO()
+    # 검은색 배경에는 JPEG가 잘 어울리며 용량도 최적화됩니다.
+    new_image.save(img_byte_arr, format='JPEG', quality=90)
+    img_byte_arr.seek(0)
+    return img_byte_arr
+
+# 3. 발송 로직
 def send_telegram():
     subj = st.session_state.subject_input.strip()
     msg = st.session_state.msg_input.strip()
@@ -25,50 +47,49 @@ def send_telegram():
     
     # [양식 구성]
     full_text = '<b><a href="https://t.me/">KIS FICC Sales InFo.</a></b>\n\n'
-    if subj:
-        full_text += f"<b>{subj}</b>\n\n"
+    if subj: full_text += f"<b>{subj}</b>\n\n"
     if msg:
         safe_msg = msg.replace('&','&amp;').replace('<','&lt;').replace('>','&gt;')
         full_text += f"<tg-spoiler>{safe_msg}</tg-spoiler>" if st.session_state.get('use_spoiler') else safe_msg
 
     try:
-        # STEP 1: 텍스트 메시지를 먼저 발송합니다.
-        url_msg = f"https://api.telegram.org/bot{token}/sendMessage"
-        resp_msg = requests.post(url_msg, json={"chat_id": chat_id, "text": full_text, "parse_mode": "HTML"})
-        
-        if resp_msg.status_code == 200:
-            msg_id = resp_msg.json()['result']['message_id']
-            
-            # STEP 2: 파일이 있다면 해당 메시지에 답장(Reply) 형식으로 붙입니다.
-            if uploaded_files:
-                # 여러 개일 경우 묶어서 답장
-                if len(uploaded_files) > 1:
-                    url_file = f"https://api.telegram.org/bot{token}/sendMediaGroup"
-                    media = []
-                    files = {}
-                    for i, file in enumerate(uploaded_files):
-                        file_id = f"file_{i}"
-                        media.append({
-                            "type": "photo" if file.type.startswith("image") else "document",
-                            "media": f"attach://{file_id}",
-                            "reply_to_message_id": msg_id # 원본 메시지에 답장
-                        })
-                        files[file_id] = (file.name, file)
-                    requests.post(url_file, data={"chat_id": chat_id, "media": json.dumps(media)}, files=files)
-                
-                # 하나일 경우 단일 답장
-                else:
-                    file = uploaded_files[0]
-                    method = "sendPhoto" if file.type.startswith("image") else "sendDocument"
-                    url_file = f"https://api.telegram.org/bot{token}/{method}"
-                    f_key = "photo" if file.type.startswith("image") else "document"
-                    requests.post(url_file, data={"chat_id": chat_id, "reply_to_message_id": msg_id}, files={f_key: (file.name, file)})
+        images = [f for f in uploaded_files if f.type.startswith("image")] if uploaded_files else []
+        docs = [f for f in uploaded_files if not f.type.startswith("image")] if uploaded_files else []
 
-            st.success("✅ 텍스트 우선 발송 완료")
+        # 이미지 처리 및 발송 (정방형 가공)
+        if images:
+            url = f"https://api.telegram.org/bot{token}/sendMediaGroup"
+            media = []
+            files = {}
+            for i, f in enumerate(images):
+                file_id = f"file_{i}"
+                # 검은색 여백으로 가공된 이미지 가져오기
+                processed_img = make_square(f)
+                
+                item = {"type": "photo", "media": f"attach://{file_id}"}
+                if i == 0:
+                    item["caption"] = full_text
+                    item["parse_mode"] = "HTML"
+                media.append(item)
+                files[file_id] = (f"img_{i}.jpg", processed_img)
+            
+            resp = requests.post(url, data={"chat_id": chat_id, "media": json.dumps(media)}, files=files)
+        else:
+            url = f"https://api.telegram.org/bot{token}/sendMessage"
+            resp = requests.post(url, json={"chat_id": chat_id, "text": full_text, "parse_mode": "HTML"})
+
+        # PDF 발송 (메시지 하단에 나열)
+        if resp.status_code == 200 and docs:
+            for doc in docs:
+                url_doc = f"https://api.telegram.org/bot{token}/sendDocument"
+                requests.post(url_doc, data={"chat_id": chat_id}, files={"document": (doc.name, doc)})
+
+        if resp.status_code == 200:
+            st.success("✅ 검은색 여백 정방형 발송 완료")
             st.session_state.subject_input = ""
             st.session_state.msg_input = ""
         else:
-            st.error(f"❌ 발송 실패: {resp_msg.text}")
+            st.error(f"❌ 실패: {resp.text}")
             
     except Exception as e:
         st.error(f"에러 발생: {e}")
@@ -82,6 +103,6 @@ col1, col2 = st.columns([1, 2])
 with col1:
     st.checkbox("Spoiler", key="use_spoiler")
 with col2:
-    st.file_uploader("Upload (Max 4)", type=["jpg", "png", "pdf"], key="file_up", accept_multiple_files=True, label_visibility="collapsed")
+    st.file_uploader("Upload", type=["jpg", "png", "pdf"], key="file_up", accept_multiple_files=True, label_visibility="collapsed")
 
 st.button("SEND", type="primary", on_click=send_telegram, use_container_width=True)
