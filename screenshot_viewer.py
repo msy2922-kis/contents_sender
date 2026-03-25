@@ -92,122 +92,89 @@ st.markdown(
 
 # -- 4-1. 클립보드 붙여넣기 (paste 이벤트 기반) --------------------------------
 PASTE_HTML = """
-<div id="paste-zone" tabindex="0" contenteditable="true" style="
+<style>
+  body { margin: 0; padding: 0; }
+  #container { font-family: sans-serif; }
+  #paste-zone {
     border: 2px dashed #0088cc; border-radius: 10px; padding: 30px;
     text-align: center; cursor: pointer; background: #f0f8ff;
-    outline: none; min-height: 80px; font-family: sans-serif;
-    transition: all 0.2s;
-">
-    <div style="color:#333; font-size:15px; font-weight:600; margin-bottom:6px;">
-        여기를 클릭한 후 Ctrl+V 로 붙여넣기
+    outline: none; min-height: 80px; transition: all 0.2s;
+  }
+  #paste-zone:focus {
+    border-color: #005fa3; background: #e0f0ff;
+  }
+  #paste-zone.done {
+    border-color: #00aa55; border-style: solid; background: #f0fff5;
+  }
+  #preview-img {
+    max-width: 100%; margin-top: 12px; border-radius: 6px;
+  }
+</style>
+
+<div id="container">
+  <div id="paste-zone" tabindex="0">
+    <div id="msg" style="color:#333; font-size:15px; font-weight:600; margin-bottom:6px;">
+      여기를 클릭한 후 Ctrl+V 로 붙여넣기
     </div>
-    <div style="color:#888; font-size:12px;">
-        캡처 도구(Win+Shift+S)로 화면 캡처 → 이 영역 클릭 → Ctrl+V
+    <div id="sub-msg" style="color:#888; font-size:12px;">
+      캡처 도구(Win+Shift+S)로 화면 캡처 → 이 영역 클릭 → Ctrl+V
     </div>
+  </div>
+  <div id="preview-container"></div>
 </div>
-<div id="status" style="margin-top:8px; font-size:13px; font-weight:600;"></div>
-<img id="preview" style="max-width:100%; max-height:250px; margin-top:10px; border-radius:6px; display:none;" />
 
 <script>
 const pasteZone = document.getElementById('paste-zone');
-const status = document.getElementById('status');
-const preview = document.getElementById('preview');
+const msg = document.getElementById('msg');
+const subMsg = document.getElementById('sub-msg');
+const previewContainer = document.getElementById('preview-container');
 
-// 자동 포커스
 pasteZone.focus();
-
-// 클릭시 포커스
 pasteZone.addEventListener('click', () => pasteZone.focus());
 
-// 포커스 스타일
-pasteZone.addEventListener('focus', () => {
-    pasteZone.style.borderColor = '#005fa3';
-    pasteZone.style.background = '#e0f0ff';
-});
-pasteZone.addEventListener('blur', () => {
-    if (!preview.src) {
-        pasteZone.style.borderColor = '#0088cc';
-        pasteZone.style.background = '#f0f8ff';
-    }
-});
-
-// 붙여넣기 이벤트
-pasteZone.addEventListener('paste', (e) => {
+document.addEventListener('paste', (e) => {
     e.preventDefault();
-    e.stopPropagation();
-
-    // contenteditable에 이미지가 삽입되는 것 방지
-    pasteZone.innerHTML = '<div style="color:#333; font-size:15px; font-weight:600;">이미지 처리 중...</div>';
-
     const items = e.clipboardData.items;
-    let found = false;
 
     for (const item of items) {
         if (item.type.startsWith('image/')) {
-            found = true;
             const blob = item.getAsFile();
-            const reader = new FileReader();
+            const url = URL.createObjectURL(blob);
 
-            reader.onload = (ev) => {
-                const dataUrl = ev.target.result;
+            // 메시지 변경
+            msg.style.color = '#00aa55';
+            msg.textContent = '✓ 이미지가 붙여넣어졌습니다';
+            subMsg.textContent = '다시 붙여넣기하면 교체됩니다.';
+            pasteZone.classList.add('done');
 
-                // 미리보기 표시
-                preview.src = dataUrl;
-                preview.style.display = 'block';
+            // 미리보기 직접 삽입
+            previewContainer.innerHTML = '<img id="preview-img" src="' + url + '" style="max-width:100%; margin-top:12px; border-radius:6px;" />';
 
-                // 스타일 변경
-                pasteZone.style.borderColor = '#00aa55';
-                pasteZone.style.borderStyle = 'solid';
-                pasteZone.style.background = '#f0fff5';
-                pasteZone.innerHTML = '<div style="color:#00aa55; font-size:15px; font-weight:600;">✓ 이미지가 붙여넣어졌습니다</div>';
-
-                status.style.color = '#00aa55';
-                status.textContent = '미리보기가 표시되었습니다.';
-
-                // Streamlit으로 데이터 전송
-                window.parent.postMessage({
-                    isStreamlitMessage: true,
-                    type: "streamlit:setComponentValue",
-                    value: dataUrl
-                }, "*");
-
-                adjustHeight();
-            };
-            reader.readAsDataURL(blob);
-            break;
+            // 높이 조정
+            setTimeout(() => {
+                const h = document.getElementById('container').scrollHeight + 20;
+                window.parent.postMessage({ type: "streamlit:setFrameHeight", height: h }, "*");
+            }, 100);
+            return;
         }
     }
 
-    if (!found) {
-        pasteZone.innerHTML = `
-            <div style="color:#333; font-size:15px; font-weight:600; margin-bottom:6px;">
-                여기를 클릭한 후 Ctrl+V 로 붙여넣기
-            </div>
-            <div style="color:#888; font-size:12px;">
-                캡처 도구(Win+Shift+S)로 화면 캡처 → 이 영역 클릭 → Ctrl+V
-            </div>`;
-        status.style.color = '#cc0000';
-        status.textContent = '클립보드에 이미지가 없습니다.';
-        adjustHeight();
-    }
+    msg.style.color = '#cc0000';
+    msg.textContent = '클립보드에 이미지가 없습니다.';
 });
 
-// 텍스트 입력 차단 (contenteditable이지만 타이핑 방지)
+// Ctrl+V 외 입력 차단
 pasteZone.addEventListener('keydown', (e) => {
     if (!(e.ctrlKey && e.key === 'v') && !e.metaKey) {
         e.preventDefault();
     }
 });
 
-function adjustHeight() {
-    const h = document.body.scrollHeight + 10;
-    window.parent.postMessage({ type: "streamlit:setFrameHeight", height: h }, "*");
-}
-adjustHeight();
+window.parent.postMessage({ type: "streamlit:setFrameHeight", height: 150 }, "*");
 </script>
 """
 
-paste_result = components.html(PASTE_HTML, height=400, scrolling=True)
+paste_result = components.html(PASTE_HTML, height=0, scrolling=False)
 
 # paste 이벤트로 받은 데이터 처리
 if paste_result and isinstance(paste_result, str) and paste_result.startswith("data:image"):
