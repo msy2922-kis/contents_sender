@@ -1,4 +1,6 @@
 import streamlit as st
+import subprocess
+import sys
 from pathlib import Path
 from datetime import datetime
 
@@ -6,6 +8,7 @@ from datetime import datetime
 st.set_page_config(page_title="Screenshot Viewer", layout="wide")
 
 CAPTURES_DIR = Path(__file__).parent / "captures"
+CAPTURE_SCRIPT = Path(__file__).parent / "screen_capture.py"
 
 # -- 2. 세션 상태 초기화 -------------------------------------------------------
 if "initialized" not in st.session_state:
@@ -74,17 +77,34 @@ def delete_capture(filepath: Path) -> None:
         filepath.unlink()
 
 
-# -- 4. UI: 헤더 & 업로드 -----------------------------------------------------
+# -- 4. UI: 헤더 & 캡처/업로드 -------------------------------------------------
 st.markdown(
     "<h3 style='color:#0088cc;'>Screenshot Viewer</h3>",
     unsafe_allow_html=True,
 )
 
-uploaded = st.file_uploader(
-    "스크린샷 업로드",
-    type=["png", "jpg", "jpeg", "bmp", "gif", "webp"],
-    accept_multiple_files=True,
-)
+col_capture, col_upload = st.columns([1, 2])
+
+with col_capture:
+    if st.button("화면 캡처", type="primary", use_container_width=True):
+        result = subprocess.run(
+            [sys.executable, str(CAPTURE_SCRIPT)],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode == 0 and "캡처 완료" in result.stdout:
+            st.success("캡처가 완료되었습니다.")
+            st.rerun()
+        else:
+            st.warning("캡처가 취소되었습니다.")
+
+with col_upload:
+    uploaded = st.file_uploader(
+        "스크린샷 업로드",
+        type=["png", "jpg", "jpeg", "bmp", "gif", "webp"],
+        accept_multiple_files=True,
+        label_visibility="collapsed",
+    )
 
 if uploaded:
     for f in uploaded:
