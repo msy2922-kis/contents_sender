@@ -161,8 +161,8 @@ pasteZone.addEventListener('paste', (e) => {
                 pasteZone.style.background = '#f0fff5';
                 pasteZone.innerHTML = '<div style="color:#00aa55; font-size:15px; font-weight:600;">✓ 이미지가 붙여넣어졌습니다</div>';
 
-                status.style.color = '#0088cc';
-                status.textContent = '저장 중...';
+                status.style.color = '#00aa55';
+                status.textContent = '미리보기가 표시되었습니다.';
 
                 // Streamlit으로 데이터 전송
                 window.parent.postMessage({
@@ -207,7 +207,7 @@ adjustHeight();
 </script>
 """
 
-paste_result = components.html(PASTE_HTML, height=130, scrolling=False)
+paste_result = components.html(PASTE_HTML, height=400, scrolling=True)
 
 # paste 이벤트로 받은 데이터 처리
 if paste_result and isinstance(paste_result, str) and paste_result.startswith("data:image"):
