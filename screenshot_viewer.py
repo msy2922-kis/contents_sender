@@ -248,7 +248,7 @@ document.addEventListener('keydown', (e) => {
 st.components.v1.html(CAPTURE_JS, height=50)
 
 # 캡처 데이터 수신용 hidden input
-capture_data = st.text_area("capture_data_input", value="", height=0, label_visibility="collapsed")
+capture_data = st.text_area("capture_data_input", value="", height=1, label_visibility="collapsed")
 
 col_save, col_upload = st.columns([1, 2])
 
