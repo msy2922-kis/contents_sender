@@ -95,6 +95,8 @@ with col_capture:
         if result.returncode == 0 and "캡처 완료" in result.stdout:
             st.success("캡처가 완료되었습니다.")
             st.rerun()
+        elif result.stderr:
+            st.error(f"캡처 오류: {result.stderr}")
         else:
             st.warning("캡처가 취소되었습니다.")
 
