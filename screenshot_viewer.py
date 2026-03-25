@@ -1,9 +1,8 @@
 import streamlit as st
+import streamlit.components.v1 as components
 import base64
-import io
 from pathlib import Path
 from datetime import datetime
-from streamlit_paste_button import paste_image_button
 
 # -- 1. 페이지 설정 -----------------------------------------------------------
 st.set_page_config(page_title="Screenshot Viewer", layout="wide")
@@ -60,11 +59,14 @@ def get_captures() -> list[Path]:
     return files
 
 
-def save_pil_image(pil_image) -> Path:
+def save_base64_image(b64data: str) -> Path:
     CAPTURES_DIR.mkdir(parents=True, exist_ok=True)
+    if "," in b64data:
+        b64data = b64data.split(",", 1)[1]
+    img_bytes = base64.b64decode(b64data)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     filepath = CAPTURES_DIR / f"capture_{timestamp}.png"
-    pil_image.save(filepath, "PNG")
+    filepath.write_bytes(img_bytes)
     return filepath
 
 
@@ -88,27 +90,129 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# -- 4-1. 클립보드 붙여넣기 ----------------------------------------------------
-st.markdown(
-    """
-    <div style="background:#f0f8ff; border-left:4px solid #0088cc; padding:10px 16px;
-                border-radius:4px; margin-bottom:10px; font-size:13px; color:#333;">
-        <b>사용법:</b> 캡처 도구로 화면 캡처 → <b>Ctrl+C</b> → 아래 버튼 클릭하여 붙여넣기
+# -- 4-1. 클립보드 붙여넣기 (paste 이벤트 기반) --------------------------------
+PASTE_HTML = """
+<div id="paste-zone" tabindex="0" contenteditable="true" style="
+    border: 2px dashed #0088cc; border-radius: 10px; padding: 30px;
+    text-align: center; cursor: pointer; background: #f0f8ff;
+    outline: none; min-height: 80px; font-family: sans-serif;
+    transition: all 0.2s;
+">
+    <div style="color:#333; font-size:15px; font-weight:600; margin-bottom:6px;">
+        여기를 클릭한 후 Ctrl+V 로 붙여넣기
     </div>
-    """,
-    unsafe_allow_html=True,
-)
+    <div style="color:#888; font-size:12px;">
+        캡처 도구(Win+Shift+S)로 화면 캡처 → 이 영역 클릭 → Ctrl+V
+    </div>
+</div>
+<div id="status" style="margin-top:8px; font-size:13px; font-weight:600;"></div>
+<img id="preview" style="max-width:100%; max-height:250px; margin-top:10px; border-radius:6px; display:none;" />
 
-paste_result = paste_image_button(
-    label="📋 클립보드에서 붙여넣기",
-    text_color="#ffffff",
-    background_color="#0088cc",
-    errors="raise",
-)
+<script>
+const pasteZone = document.getElementById('paste-zone');
+const status = document.getElementById('status');
+const preview = document.getElementById('preview');
 
-if paste_result.image_data is not None:
-    filepath = save_pil_image(paste_result.image_data)
-    st.success(f"캡처가 저장되었습니다! ({filepath.name})")
+// 자동 포커스
+pasteZone.focus();
+
+// 클릭시 포커스
+pasteZone.addEventListener('click', () => pasteZone.focus());
+
+// 포커스 스타일
+pasteZone.addEventListener('focus', () => {
+    pasteZone.style.borderColor = '#005fa3';
+    pasteZone.style.background = '#e0f0ff';
+});
+pasteZone.addEventListener('blur', () => {
+    if (!preview.src) {
+        pasteZone.style.borderColor = '#0088cc';
+        pasteZone.style.background = '#f0f8ff';
+    }
+});
+
+// 붙여넣기 이벤트
+pasteZone.addEventListener('paste', (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    // contenteditable에 이미지가 삽입되는 것 방지
+    pasteZone.innerHTML = '<div style="color:#333; font-size:15px; font-weight:600;">이미지 처리 중...</div>';
+
+    const items = e.clipboardData.items;
+    let found = false;
+
+    for (const item of items) {
+        if (item.type.startsWith('image/')) {
+            found = true;
+            const blob = item.getAsFile();
+            const reader = new FileReader();
+
+            reader.onload = (ev) => {
+                const dataUrl = ev.target.result;
+
+                // 미리보기 표시
+                preview.src = dataUrl;
+                preview.style.display = 'block';
+
+                // 스타일 변경
+                pasteZone.style.borderColor = '#00aa55';
+                pasteZone.style.borderStyle = 'solid';
+                pasteZone.style.background = '#f0fff5';
+                pasteZone.innerHTML = '<div style="color:#00aa55; font-size:15px; font-weight:600;">✓ 이미지가 붙여넣어졌습니다</div>';
+
+                status.style.color = '#0088cc';
+                status.textContent = '저장 중...';
+
+                // Streamlit으로 데이터 전송
+                window.parent.postMessage({
+                    isStreamlitMessage: true,
+                    type: "streamlit:setComponentValue",
+                    value: dataUrl
+                }, "*");
+
+                adjustHeight();
+            };
+            reader.readAsDataURL(blob);
+            break;
+        }
+    }
+
+    if (!found) {
+        pasteZone.innerHTML = `
+            <div style="color:#333; font-size:15px; font-weight:600; margin-bottom:6px;">
+                여기를 클릭한 후 Ctrl+V 로 붙여넣기
+            </div>
+            <div style="color:#888; font-size:12px;">
+                캡처 도구(Win+Shift+S)로 화면 캡처 → 이 영역 클릭 → Ctrl+V
+            </div>`;
+        status.style.color = '#cc0000';
+        status.textContent = '클립보드에 이미지가 없습니다.';
+        adjustHeight();
+    }
+});
+
+// 텍스트 입력 차단 (contenteditable이지만 타이핑 방지)
+pasteZone.addEventListener('keydown', (e) => {
+    if (!(e.ctrlKey && e.key === 'v') && !e.metaKey) {
+        e.preventDefault();
+    }
+});
+
+function adjustHeight() {
+    const h = document.body.scrollHeight + 10;
+    window.parent.postMessage({ type: "streamlit:setFrameHeight", height: h }, "*");
+}
+adjustHeight();
+</script>
+"""
+
+paste_result = components.html(PASTE_HTML, height=130, scrolling=False)
+
+# paste 이벤트로 받은 데이터 처리
+if paste_result and isinstance(paste_result, str) and paste_result.startswith("data:image"):
+    save_base64_image(paste_result)
+    st.success("캡처가 저장되었습니다!")
     st.rerun()
 
 # -- 4-2. 파일 업로드 ----------------------------------------------------------

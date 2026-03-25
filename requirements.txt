@@ -2,4 +2,3 @@ streamlit
 requests
 Pillow
 mss
-streamlit-paste-button
