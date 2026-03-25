@@ -1,6 +1,5 @@
 import streamlit as st
-import subprocess
-import sys
+import base64
 from pathlib import Path
 from datetime import datetime
 
@@ -8,7 +7,6 @@ from datetime import datetime
 st.set_page_config(page_title="Screenshot Viewer", layout="wide")
 
 CAPTURES_DIR = Path(__file__).parent / "captures"
-CAPTURE_SCRIPT = Path(__file__).parent / "screen_capture.py"
 
 # -- 2. 세션 상태 초기화 -------------------------------------------------------
 if "initialized" not in st.session_state:
@@ -71,6 +69,17 @@ def save_uploaded(uploaded_file) -> Path:
     return filepath
 
 
+def save_base64_image(data_url: str) -> Path:
+    """base64 data URL을 이미지 파일로 저장합니다."""
+    CAPTURES_DIR.mkdir(parents=True, exist_ok=True)
+    header, b64data = data_url.split(",", 1)
+    img_bytes = base64.b64decode(b64data)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filepath = CAPTURES_DIR / f"capture_{timestamp}.png"
+    filepath.write_bytes(img_bytes)
+    return filepath
+
+
 def delete_capture(filepath: Path) -> None:
     """이미지 파일을 삭제합니다."""
     if filepath.exists():
@@ -83,22 +92,172 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-col_capture, col_upload = st.columns([1, 2])
+# -- 4-1. 브라우저 화면 캡처 (getDisplayMedia + 드래그 영역 선택) ----------------
+CAPTURE_JS = """
+<div id="capture-btn-wrap">
+    <button id="captureBtn" style="
+        background-color:#0088cc; color:white; border:none; padding:10px 24px;
+        border-radius:6px; font-size:15px; font-weight:600; cursor:pointer; width:100%;
+    ">화면 캡처</button>
+</div>
 
-with col_capture:
-    if st.button("화면 캡처", type="primary", use_container_width=True):
-        result = subprocess.run(
-            [sys.executable, str(CAPTURE_SCRIPT)],
-            capture_output=True,
-            text=True,
-        )
-        if result.returncode == 0 and "캡처 완료" in result.stdout:
-            st.success("캡처가 완료되었습니다.")
+<!-- 영역 선택 오버레이 -->
+<div id="crop-overlay" style="
+    display:none; position:fixed; top:0; left:0; width:100vw; height:100vh;
+    z-index:999999; cursor:crosshair;
+">
+    <canvas id="crop-canvas" style="width:100%; height:100%;"></canvas>
+    <div style="
+        position:fixed; top:12px; left:50%; transform:translateX(-50%);
+        background:rgba(0,0,0,0.7); color:white; padding:8px 20px;
+        border-radius:8px; font-size:14px; z-index:1000000;
+    ">마우스로 캡처할 영역을 드래그하세요 (ESC 취소)</div>
+</div>
+
+<script>
+const btn = document.getElementById('captureBtn');
+const overlay = document.getElementById('crop-overlay');
+const canvas = document.getElementById('crop-canvas');
+const ctx = canvas.getContext('2d');
+
+let fullImage = null;
+let startX = 0, startY = 0, dragging = false;
+
+btn.addEventListener('click', async () => {
+    try {
+        const stream = await navigator.mediaDevices.getDisplayMedia({
+            video: { cursor: 'never' }
+        });
+
+        const video = document.createElement('video');
+        video.srcObject = stream;
+        await video.play();
+
+        // 프레임 캡처 대기
+        await new Promise(r => setTimeout(r, 200));
+
+        const tmpCanvas = document.createElement('canvas');
+        tmpCanvas.width = video.videoWidth;
+        tmpCanvas.height = video.videoHeight;
+        tmpCanvas.getContext('2d').drawImage(video, 0, 0);
+
+        stream.getTracks().forEach(t => t.stop());
+
+        fullImage = tmpCanvas;
+
+        // 오버레이에 캡처된 화면 표시
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+        ctx.drawImage(fullImage, 0, 0, canvas.width, canvas.height);
+        overlay.style.display = 'block';
+
+    } catch(e) {
+        // 사용자가 공유 취소
+    }
+});
+
+overlay.addEventListener('mousedown', (e) => {
+    startX = e.clientX;
+    startY = e.clientY;
+    dragging = true;
+});
+
+overlay.addEventListener('mousemove', (e) => {
+    if (!dragging) return;
+    // 배경 다시 그리기
+    ctx.drawImage(fullImage, 0, 0, canvas.width, canvas.height);
+    // 선택 영역 외부 어둡게
+    ctx.fillStyle = 'rgba(0,0,0,0.4)';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    // 선택 영역만 밝게
+    const x = Math.min(startX, e.clientX);
+    const y = Math.min(startY, e.clientY);
+    const w = Math.abs(e.clientX - startX);
+    const h = Math.abs(e.clientY - startY);
+    ctx.clearRect(x, y, w, h);
+    ctx.drawImage(fullImage, x, y, w, h, x, y, w, h);
+    // 선택 영역 테두리
+    ctx.strokeStyle = '#00aaff';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(x, y, w, h);
+});
+
+overlay.addEventListener('mouseup', (e) => {
+    if (!dragging) return;
+    dragging = false;
+    overlay.style.display = 'none';
+
+    const x = Math.min(startX, e.clientX);
+    const y = Math.min(startY, e.clientY);
+    const w = Math.abs(e.clientX - startX);
+    const h = Math.abs(e.clientY - startY);
+
+    if (w < 10 || h < 10) return;
+
+    // 원본 비율로 크롭
+    const scaleX = fullImage.width / canvas.width;
+    const scaleY = fullImage.height / canvas.height;
+    const cropCanvas = document.createElement('canvas');
+    cropCanvas.width = Math.round(w * scaleX);
+    cropCanvas.height = Math.round(h * scaleY);
+    cropCanvas.getContext('2d').drawImage(
+        fullImage,
+        Math.round(x * scaleX), Math.round(y * scaleY),
+        cropCanvas.width, cropCanvas.height,
+        0, 0, cropCanvas.width, cropCanvas.height
+    );
+
+    const dataUrl = cropCanvas.toDataURL('image/png');
+
+    // Streamlit에 전송 (hidden input + form submit 방식 대신 query param)
+    // Streamlit components 통신을 위해 hidden text_input에 값 설정
+    const hiddenInput = window.parent.document.querySelectorAll('input[data-testid="stTextInput"]');
+    // data URL을 세션에 전달하기 위해 textarea 사용
+    const textareas = window.parent.document.querySelectorAll('textarea');
+    for (const ta of textareas) {
+        if (ta.getAttribute('aria-label') === 'capture_data_input') {
+            const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
+                window.HTMLTextAreaElement.prototype, 'value'
+            ).set;
+            nativeInputValueSetter.call(ta, dataUrl);
+            ta.dispatchEvent(new Event('input', { bubbles: true }));
+            // 약간의 지연 후 폼 제출 버튼 클릭
+            setTimeout(() => {
+                const buttons = window.parent.document.querySelectorAll('button');
+                for (const b of buttons) {
+                    if (b.innerText === '캡처 저장') {
+                        b.click();
+                        break;
+                    }
+                }
+            }, 300);
+            break;
+        }
+    }
+});
+
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && overlay.style.display === 'block') {
+        overlay.style.display = 'none';
+        dragging = false;
+    }
+});
+</script>
+"""
+
+st.components.v1.html(CAPTURE_JS, height=50)
+
+# 캡처 데이터 수신용 hidden input
+capture_data = st.text_area("capture_data_input", value="", height=0, label_visibility="collapsed")
+
+col_save, col_upload = st.columns([1, 2])
+
+with col_save:
+    if st.button("캡처 저장", use_container_width=True):
+        if capture_data and capture_data.startswith("data:image"):
+            save_base64_image(capture_data)
+            st.success("캡처가 저장되었습니다.")
             st.rerun()
-        elif result.stderr:
-            st.error(f"캡처 오류: {result.stderr}")
-        else:
-            st.warning("캡처가 취소되었습니다.")
 
 with col_upload:
     uploaded = st.file_uploader(
