@@ -5,7 +5,22 @@ from pathlib import Path
 st.set_page_config(page_title="Screenshot Viewer", layout="wide")
 CAPTURE_FILE = Path(__file__).parent / "captures" / "current.png"
 CAPTURE_FILE.parent.mkdir(parents=True, exist_ok=True)
-# -- 쿼리 파라미터로 붙여넣기 이미지 수신 → 파일 저장 --------------------------
+# -- 인증 ---------------------------------------------------------------------
+if "authenticated" not in st.session_state:
+    st.session_state.authenticated = False
+if not st.session_state.authenticated:
+    st.markdown("<div style='text-align:center;padding:20px 0 10px'>"
+                "<div style='font-size:22px;font-weight:700;color:#0088cc'>Screenshot Viewer</div></div>",
+                unsafe_allow_html=True)
+    pw = st.text_input("비밀번호", type="password", placeholder="비밀번호를 입력하세요")
+    if st.button("확인", use_container_width=True, type="primary"):
+        if pw == st.secrets["APP_PASSWORD"]:
+            st.session_state.authenticated = True
+            st.rerun()
+        else:
+            st.error("비밀번호가 올바르지 않습니다.")
+    st.stop()
+# -- 쿼리 파라미터: 이미지 저장 ------------------------------------------------
 if "pasted_image" in st.query_params:
     b64 = st.query_params["pasted_image"]
     if b64 and b64.startswith("data:image"):
@@ -13,7 +28,7 @@ if "pasted_image" in st.query_params:
         CAPTURE_FILE.write_bytes(base64.b64decode(raw))
     st.query_params.clear()
     st.rerun()
-# -- 삭제 처리 -----------------------------------------------------------------
+# -- 쿼리 파라미터: 이미지 삭제 ------------------------------------------------
 if "delete" in st.query_params:
     if CAPTURE_FILE.exists():
         CAPTURE_FILE.unlink()
@@ -21,7 +36,6 @@ if "delete" in st.query_params:
     st.rerun()
 # -- 메인 UI -------------------------------------------------------------------
 st.markdown("<h3 style='color:#0088cc'>Screenshot Viewer</h3>", unsafe_allow_html=True)
-# 저장된 이미지가 있으면 base64로 읽어서 iframe에 전달
 saved_b64 = ""
 if CAPTURE_FILE.exists():
     saved_b64 = "data:image/png;base64," + base64.b64encode(CAPTURE_FILE.read_bytes()).decode()
@@ -62,44 +76,49 @@ const z=document.getElementById('z'),m=document.getElementById('m'),
       btns=document.getElementById('btns'),
       sv=document.getElementById('sv'),dl=document.getElementById('dl');
 let cur=null;
-const saved="{saved_b64}";
+const saved='{saved_b64}';
 function H(){{
-  const h=document.documentElement.scrollHeight+20;
-  window.parent.postMessage({{type:"streamlit:setFrameHeight",height:h}},"*");
+  requestAnimationFrame(()=>{{
+    const h=document.documentElement.scrollHeight+20;
+    window.parent.postMessage({{type:"streamlit:setFrameHeight",height:h}},"*");
+  }});
 }}
-// 저장된 이미지가 있으면 바로 표시
-if(saved){{
-  cur=saved;
-  m.style.color='#00cc66';m.textContent='Ctrl+V 로 교체 가능';
-  s.textContent='';z.classList.add('ok');
-  p.src=saved;p.style.display='block';
+function showImage(src,isSaved){{
+  cur=src;
+  m.style.color='#00cc66';
+  m.textContent=isSaved?'Ctrl+V 로 교체 가능':'새 이미지 — 저장 버튼을 눌러주세요';
+  s.textContent='';
+  z.classList.add('ok');
+  p.src=src;p.style.display='block';
   btns.style.display='flex';
-  sv.style.display='none'; // 이미 저장된 상태
-  p.onload=()=>setTimeout(H,50);
+  sv.style.display=isSaved?'none':'inline-block';
+  sv.disabled=false;sv.textContent='저장';
+  p.onload=()=>setTimeout(H,100);
+}}
+// 저장된 이미지 복원
+if(saved.length>30){{
+  showImage(saved,true);
 }}
 z.focus();
-z.addEventListener('click',e=>{{if(e.target===sv||e.target===dl)return;z.focus();}});
+z.addEventListener('click',e=>{{
+  if(e.target===sv||e.target===dl)return;
+  z.focus();
+}});
 document.addEventListener('paste',e=>{{
   e.preventDefault();
   for(const i of e.clipboardData.items){{
     if(i.type.startsWith('image/')){{
       const r=new FileReader();
-      r.onloadend=()=>{{
-        cur=r.result;
-        m.style.color='#00cc66';m.textContent='새 이미지 붙여넣기 완료';
-        s.textContent='저장 버튼을 눌러 유지하거나, Ctrl+V로 교체';
-        z.classList.add('ok');
-        p.src=cur;p.style.display='block';
-        btns.style.display='flex';
-        sv.style.display='inline-block';sv.disabled=false;sv.textContent='저장';
-        p.onload=()=>setTimeout(H,50);
-      }};
-      r.readAsDataURL(i.getAsFile());return;
+      r.onloadend=()=>showImage(r.result,false);
+      r.readAsDataURL(i.getAsFile());
+      return;
     }}
   }}
   m.style.color='#ff4444';m.textContent='클립보드에 이미지가 없습니다';
-  setTimeout(()=>{{m.style.color='#ccc';m.textContent='여기를 클릭한 후 Ctrl+V 로 붙여넣기';
-    s.textContent='캡처 도구(Win+Shift+S) → 이 영역 클릭 → Ctrl+V';}},2000);
+  setTimeout(()=>{{
+    m.style.color='#ccc';m.textContent='여기를 클릭한 후 Ctrl+V 로 붙여넣기';
+    s.textContent='캡처 도구(Win+Shift+S) → 이 영역 클릭 → Ctrl+V';
+  }},2000);
 }});
 sv.addEventListener('click',()=>{{
   if(!cur)return;
@@ -117,6 +136,6 @@ z.addEventListener('keydown',e=>{{
   if(!(e.ctrlKey&&e.key==='v')&&!(e.metaKey&&e.key==='v'))e.preventDefault();
 }});
 window.addEventListener('resize',()=>setTimeout(H,100));
-H();
+setTimeout(H,200);
 </script>
-""", height=0)
+""", height=250)
