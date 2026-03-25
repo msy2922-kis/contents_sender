@@ -5,21 +5,6 @@ from pathlib import Path
 st.set_page_config(page_title="Screenshot Viewer", layout="wide")
 CAPTURE_FILE = Path(__file__).parent / "captures" / "current.png"
 CAPTURE_FILE.parent.mkdir(parents=True, exist_ok=True)
-# -- 인증 ---------------------------------------------------------------------
-if "authenticated" not in st.session_state:
-    st.session_state.authenticated = False
-if not st.session_state.authenticated:
-    st.markdown("<div style='text-align:center;padding:20px 0 10px'>"
-                "<div style='font-size:22px;font-weight:700;color:#0088cc'>Screenshot Viewer</div></div>",
-                unsafe_allow_html=True)
-    pw = st.text_input("비밀번호", type="password", placeholder="비밀번호를 입력하세요")
-    if st.button("확인", use_container_width=True, type="primary"):
-        if pw == st.secrets["APP_PASSWORD"]:
-            st.session_state.authenticated = True
-            st.rerun()
-        else:
-            st.error("비밀번호가 올바르지 않습니다.")
-    st.stop()
 # -- 쿼리 파라미터로 붙여넣기 이미지 수신 → 파일 저장 --------------------------
 if "pasted_image" in st.query_params:
     b64 = st.query_params["pasted_image"]
