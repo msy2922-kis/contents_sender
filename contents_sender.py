@@ -123,6 +123,9 @@ def fetch_fred_today_events() -> list[str]:
     today    = date.today().strftime("%Y-%m-%d")
     tomorrow = (date.today() + timedelta(days=1)).strftime("%Y-%m-%d")
     events   = []
+    api_key  = st.secrets.get("FRED_API_KEY")
+    if not api_key:
+        return events
 
     for series_id, label in US_FRED_SERIES.items():
         try:
@@ -131,7 +134,7 @@ def fetch_fred_today_events() -> list[str]:
                 f"?series_id={series_id}"
                 f"&observation_start={today}"
                 f"&observation_end={tomorrow}"
-                f"&api_key=b241dfef1e5d2d12e46e5dfef18e20c7"
+                f"&api_key={api_key}"
                 f"&file_type=json"
             )
             resp = requests.get(url, timeout=5)

@@ -26,8 +26,7 @@ streamlit run contents_sender.py
 - `APP_PASSWORD` — 앱 로그인 화면의 접근 비밀번호
 - `TELEGRAM_TOKEN` — 텔레그램 봇 토큰
 - `CHAT_ID` — 발송 대상 텔레그램 채팅/채널
-
-FRED API 키는 현재 `fetch_fred_today_events()` 안에 하드코딩되어 있음.
+- `FRED_API_KEY` — FRED API 키 (없으면 미국 지표 당일 발표 확인 기능만 조용히 비활성화됨)
 
 ## contents_sender.py 구조
 
